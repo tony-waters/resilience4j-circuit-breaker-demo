@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: orders
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d orders"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  email-service:
+    build:
+      context: .
+      args:
+        MODULE: email-service
+    environment:
+      DEMO_EMAIL_SERVICE_PROCESSING_DELAY: 250ms
+    ports:
+      - "8082:8082"
+
+  rest-service:
+    build:
+      context: .
+      args:
+        MODULE: rest-service
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orders
+      SPRING_DATASOURCE_USERNAME: demo
+      SPRING_DATASOURCE_PASSWORD: demo
+      DEMO_EMAIL_SERVICE_BASE_URL: http://email-service:8082
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      email-service:
+        condition: service_started
+
+  k6-circuit-breaker:
+    image: grafana/k6:0.54.0
+    profiles:
+      - test
+    environment:
+      BASE_URL: http://rest-service:8081
+      EMAIL_SERVICE_BASE_URL: http://email-service:8082
+    volumes:
+      - ./k6:/scripts:ro
+    command: run /scripts/circuit-breaker.js
+    depends_on:
+      rest-service:
+        condition: service_started
+
+volumes:
+  postgres-data:

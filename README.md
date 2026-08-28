@@ -3,9 +3,9 @@
 Two Spring Boot applications in one Maven repo:
 
 - `rest-service`: REST + JPA order API backed by Postgres. It calls the downstream email API through a Resilience4j circuit breaker.
-- `email-service`: downstream email API with a toggleable failure mode so the circuit breaker can record failures and open.
+- `email-service`: downstream email API that accepts order confirmation email requests.
 
-The circuit breaker is configured with a count-based sliding window of 4 calls, a minimum of 4 calls, and a 50% failure-rate threshold. When `email-service` is put into failure mode, the first failing calls still reach the downstream service. Once the threshold is crossed, the circuit moves to `OPEN`, later calls are rejected immediately with `CallNotPermittedException`, and the REST service falls back to `EMAIL_DEFERRED`. Orders are still saved.
+The circuit breaker is configured with a count-based sliding window of 4 calls, a minimum of 4 calls, and a 50% failure-rate threshold. If the downstream email service is unavailable, the first failing calls still reach the downstream service. Once the threshold is crossed, the circuit moves to `OPEN`, later calls are rejected immediately with `CallNotPermittedException`, and the REST service falls back to `EMAIL_DEFERRED`. Orders are still saved.
 
 ## Build
 
@@ -64,15 +64,7 @@ curl -i -X POST http://localhost:8081/api/orders \
   -d '{"customerEmail":"alice@example.com","description":"Demo order","amount":42.50}'
 ```
 
-Turn on downstream failures:
-
-```bash
-curl -i -X POST http://localhost:8082/emails/failure-mode \
-  -H 'Content-Type: application/json' \
-  -d '{"enabled":true}'
-```
-
-Create several more orders. After 4 measured calls, the circuit breaker should open and the response will still be `201 Created`, with email work deferred:
+If the downstream service is unavailable and enough calls fail, the circuit breaker opens and the response will still be `201 Created`, with email work deferred:
 
 ```json
 {
@@ -81,19 +73,11 @@ Create several more orders. After 4 measured calls, the circuit breaker should o
 }
 ```
 
-Turn downstream failures back off:
-
-```bash
-curl -i -X POST http://localhost:8082/emails/failure-mode \
-  -H 'Content-Type: application/json' \
-  -d '{"enabled":false}'
-```
-
 After `wait-duration-in-open-state` passes, the circuit breaker moves to `HALF_OPEN`. Successful trial calls close it again.
 
 ## k6 Demo
 
-Run the k6 test to enable email failure mode, send enough orders to open the circuit, and disable failure mode at the end:
+Run the k6 test to send normal order traffic while the email service is healthy:
 
 ```bash
 docker compose --profile test run --rm k6-circuit-breaker
@@ -105,7 +89,7 @@ Watch the REST service logs in another terminal:
 docker compose logs -f rest-service
 ```
 
-The k6 run should report `deferred_email_responses` and `open_circuit_responses` above zero. The REST logs should include:
+The k6 run should report `sent_email_responses` above zero and no deferred or open-circuit responses. If the downstream service is unavailable, the REST logs can include:
 
 ```text
 circuit breaker error name=emailService
@@ -115,4 +99,4 @@ circuit breaker call not permitted name=emailService state=OPEN
 
 ## Why This Shows Circuit Breaker Behavior
 
-A circuit breaker reacts to failure rate, not concurrent load. This demo deliberately makes `email-service` return `503 Service Unavailable`, so the REST service records downstream failures. With the configured 4-call sliding window and 50% threshold, the circuit opens quickly. Once open, calls stop reaching `email-service` until the open-state wait duration elapses, which protects the REST workflow from repeatedly calling a failing dependency.
+A circuit breaker reacts to failure rate, not concurrent load. During the normal k6 run, `email-service` accepts requests and the circuit remains closed. If the downstream service becomes unavailable, the REST service records those failures. With the configured 4-call sliding window and 50% threshold, the circuit opens quickly. Once open, calls stop reaching `email-service` until the open-state wait duration elapses, which protects the REST workflow from repeatedly calling a failing dependency.

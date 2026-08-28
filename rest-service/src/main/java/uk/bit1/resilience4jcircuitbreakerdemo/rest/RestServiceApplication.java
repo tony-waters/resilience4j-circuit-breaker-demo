@@ -1,7 +1,5 @@
 package uk.bit1.resilience4jcircuitbreakerdemo.rest;
 
-import java.time.Duration;
-
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -20,8 +18,8 @@ public class RestServiceApplication {
     @Bean
     RestClient emailRestClient(EmailServiceProperties properties) {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(Duration.ofSeconds(1));
-        requestFactory.setReadTimeout(Duration.ofSeconds(10));
+        requestFactory.setConnectTimeout(properties.connectTimeout());
+        requestFactory.setReadTimeout(properties.readTimeout());
 
         return RestClient.builder()
                 .baseUrl(properties.baseUrl())

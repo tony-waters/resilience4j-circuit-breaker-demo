@@ -7,7 +7,7 @@ spring:
 
 demo:
   email-service:
-    processing-delay: 250ms
+    processing-delay: 1s
 
 management:
   endpoints:

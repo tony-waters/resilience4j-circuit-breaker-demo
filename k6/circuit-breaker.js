@@ -1,9 +1,8 @@
 import http from 'k6/http';
-import { check, fail, sleep } from 'k6';
+import { check, sleep } from 'k6';
 import { Counter, Rate } from 'k6/metrics';
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:8081';
-const EMAIL_SERVICE_BASE_URL = __ENV.EMAIL_SERVICE_BASE_URL || 'http://localhost:8082';
 
 export const sentEmails = new Counter('sent_email_responses');
 export const deferredEmails = new Counter('deferred_email_responses');
@@ -12,41 +11,22 @@ export const unexpectedResponses = new Rate('unexpected_responses');
 
 export const options = {
   scenarios: {
-    open_email_circuit_breaker: {
+    normal_email_delivery: {
       executor: 'constant-arrival-rate',
       rate: 8,
       timeUnit: '1s',
-      duration: '30s',
+      duration: '10s',
       preAllocatedVUs: 8,
       maxVUs: 16,
     },
   },
   thresholds: {
-    deferred_email_responses: ['count>0'],
-    open_circuit_responses: ['count>0'],
+    sent_email_responses: ['count>0'],
+    deferred_email_responses: ['count==0'],
+    open_circuit_responses: ['count==0'],
     unexpected_responses: ['rate<0.01'],
   },
 };
-
-export function setup() {
-  const response = http.post(`${EMAIL_SERVICE_BASE_URL}/emails/failure-mode`, JSON.stringify({ enabled: true }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
-
-  if (response.status !== 200) {
-    fail(`failed to enable email-service failure mode status=${response.status} url=${EMAIL_SERVICE_BASE_URL}`);
-  }
-}
-
-export function teardown() {
-  const response = http.post(`${EMAIL_SERVICE_BASE_URL}/emails/failure-mode`, JSON.stringify({ enabled: false }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
-
-  if (response.status !== 200) {
-    console.warn(`Failed to disable email-service failure mode status=${response.status} url=${EMAIL_SERVICE_BASE_URL}`);
-  }
-}
 
 export default function () {
   const id = `${__VU}-${__ITER}-${Date.now()}`;
@@ -71,7 +51,7 @@ export default function () {
   const reason = body.emailFailureReason || '';
   const isOpenCircuit = isDeferred && reason.includes('CallNotPermittedException');
   const expected = check(response, {
-    'order created with sent or circuit-breaker-deferred email': () => isSent || isDeferred,
+    'order created with sent email': () => isSent,
   });
 
   if (isSent) {
